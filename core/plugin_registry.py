@@ -634,3 +634,19 @@ class PluginRegistry:
                 key=lambda plugin: plugin.name,
             ),
         )
+
+    def run_host_stage(self, stage, target, dirs, mode="balanced", context=None):
+        """Run all enabled plugins belonging to a scanner stage."""
+        context = dict(context or {})
+        results = {}
+
+        for plugin in self.execution_plan(mode):
+            if plugin.stage != stage:
+                continue
+
+            if not self.should_run(plugin, context):
+                continue
+
+            results[plugin.name] = plugin.run(target, dirs, mode)
+
+        return results

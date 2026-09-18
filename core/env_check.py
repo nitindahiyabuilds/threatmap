@@ -11,6 +11,9 @@ from core.plugin_registry import PluginRegistry
 from core.scan_logger import get_logger
 
 
+log = get_logger("env")
+
+
 @dataclass(frozen=True)
 class ToolDef:
     name: str
@@ -159,9 +162,16 @@ class ScanDirs:
     @classmethod
     def create(
         cls,
-        base_dir: Path,
-        target: str,
+        base_dir: Path = None,
+        target: str = "",
+        base: str = None,
     ) -> "ScanDirs":
+        if base_dir is None:
+            if base is None:
+                raise TypeError("ScanDirs.create() requires base or base_dir")
+            base_dir = Path(base)
+        elif base is not None:
+            raise TypeError("provide only one of base or base_dir")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         slug = cls._safe_slug(target)
 
@@ -169,8 +179,23 @@ class ScanDirs:
 
         return cls(root=root)
 
+    @property
+    def report_dir(self) -> str:
+        return str(self.reports)
+
+    @property
+    def raw_dir(self) -> str:
+        return str(self.raw)
+
+    @property
+    def log_file(self) -> str:
+        return str(self.logs / "scan.log")
+
+    def raw_file(self, name: str) -> str:
+        return str(self.raw / name)
+
     @staticmethod
-    def _safe_slug(value: str) -> str:
+    def _safe_slug(value: str):
         safe = "".join(
             character
             if character.isalnum() or character in "-_."

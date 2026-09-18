@@ -163,10 +163,10 @@ class ParallelOrchestrator:
                 }
 
                 runs = self.registry.run_host_stage(
-                    self.mode,
                     stage_name,
                     target,
                     dirs,
+                    self.mode,
                     context,
                 )
 
@@ -177,9 +177,7 @@ class ParallelOrchestrator:
                     nmap = runs["nmap"]
                     parsed = []
 
-                    xml = dirs.raw_file(
-                        f"nmap_{target.domain}.xml"
-                    )
+                    xml = str(dirs.raw / f"nmap_{target.domain}.xml")
 
                     if nmap.status != ToolStatus.FAILED:
                         parser = self.registry.plugins[
@@ -477,13 +475,13 @@ class ScannerKit:
         if (
             subfinder_result.ok
             and Path(
-                dirs.raw_file("subdomains.txt")
+                str(dirs.raw / "subdomains.txt")
             ).exists()
         ):
             subs.update(
                 line.strip()
                 for line in Path(
-                    dirs.raw_file("subdomains.txt")
+                    str(dirs.raw / "subdomains.txt")
                 ).read_text().splitlines()
                 if line.strip()
             )
@@ -504,7 +502,7 @@ class ScannerKit:
 
         if subs:
             Path(
-                dirs.raw_file("subdomains_all.txt")
+                str(dirs.raw / "subdomains_all.txt")
             ).write_text(
                 "\n".join(sorted(subs))
             )
@@ -533,9 +531,7 @@ class ScannerKit:
         if not result.ok:
             return []
 
-        live_file = dirs.raw_file(
-            "live_hosts.txt"
-        )
+        live_file = str(dirs.raw / "live_hosts.txt")
 
         if not Path(live_file).exists():
             return []
