@@ -1,21 +1,4 @@
-"""
-env_check.py — ThreatMap Infra Environment Validation
-
-Validates required tools before a scan starts.
-Caches tool paths for reuse across the scan.
-Creates the per-scan directory structure.
-
-Usage:
-    from env_check import ToolRegistry, ScanDirs
-
-    registry = ToolRegistry()
-    ok, missing = registry.validate()
-    if not ok:
-        registry.print_install_guide(missing)
-
-    dirs = ScanDirs.create(base="scans", target="example.com")
-    nmap_out = dirs.raw / "nmap.xml"
-"""
+from __future__ import annotations
 
 import os
 import shutil
@@ -24,212 +7,177 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from core.plugin_registry import PluginRegistry
 from core.scan_logger import get_logger
 
-log = get_logger("env")
 
-
-# ── Tool definitions ──────────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(frozen=True)
 class ToolDef:
-    name:      str           # binary name
-    required:  bool          # if True, warn clearly when missing
-    install:   str           # short install command shown to user
-    verify:    list[str] = field(default_factory=list)   # args that prove it works
+    name: str
+    required: bool
+    install: str
+    verify: str = ""
     version_flag: str = "--version"
 
 
-TOOLS: list[ToolDef] = [
-    # Required — scan returns nothing without these
-    ToolDef("nmap",      True,  "sudo apt install -y nmap"),
-    ToolDef("nikto",     True,  "sudo apt install -y nikto"),
-    ToolDef("gobuster",  True,  "sudo apt install -y gobuster"),
-    ToolDef("sslscan",   True,  "sudo apt install -y sslscan"),
-    ToolDef("whatweb",   True,  "sudo apt install -y whatweb"),
-    ToolDef("curl",      True,  "sudo apt install -y curl"),
-    ToolDef("whois",     True,  "sudo apt install -y whois"),
-    ToolDef("dig",       True,  "sudo apt install -y dnsutils"),
+def _load_tool_defs() -> list[ToolDef]:
+    registry = PluginRegistry()
 
-    # Optional — tool skipped gracefully if absent
-    ToolDef("subfinder",   False, "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"),
-    ToolDef("httpx",       False, "go install github.com/projectdiscovery/httpx/cmd/httpx@latest"),
-    ToolDef("assetfinder", False, "go install github.com/tomnomnom/assetfinder@latest"),
-    ToolDef("nuclei",      False, "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"),
-    ToolDef("wafw00f",     False, "pip install wafw00f"),
-]
+    v1_order = [
+        "nmap",
+        "nikto",
+        "gobuster",
+        "sslscan",
+        "whatweb",
+        "curl",
+        "whois",
+        "dig",
+        "subfinder",
+        "httpx",
+        "assetfinder",
+        "nuclei",
+        "wafw00f",
+    ]
+
+    return [
+        ToolDef(
+            name=name,
+            required=registry.plugins[name].required,
+            install=registry.plugins[name].install_hint,
+        )
+        for name in v1_order
+        if name in registry.plugins
+    ]
+
+
+TOOLS = _load_tool_defs()
 
 
 class ToolRegistry:
-    """
-    Validates installed tools and caches their resolved paths.
-    Thread-safe for concurrent scanner use.
-    """
-
     def __init__(self) -> None:
-        self._paths:   dict[str, Optional[str]] = {}
-        self._checked: bool = False
+        self._paths: dict[str, Optional[str]] = {}
+        self._checked = False
 
     def validate(self) -> tuple[bool, list[ToolDef]]:
-        """
-        Check all defined tools. Returns (all_required_present, missing_list).
-        Populates the internal path cache.
-        """
         missing: list[ToolDef] = []
+
         for tool in TOOLS:
             path = self._resolve(tool.name)
+
             if path:
-                log.debug("[env] %-16s found: %s", tool.name, path)
-            else:
-                log.debug("[env] %-16s NOT found", tool.name)
-                if tool.required:
-                    missing.append(tool)
+                self._paths[tool.name] = path
+            elif tool.required:
+                missing.append(tool)
 
         self._checked = True
-        all_ok = len(missing) == 0
-        if all_ok:
-            log.info("[env] all required tools present")
-        else:
-            names = ", ".join(t.name for t in missing)
-            log.warning("[env] missing required tools: %s", names)
 
-        return all_ok, missing
+        return len(missing) == 0, missing
 
     def get(self, name: str) -> Optional[str]:
-        """
-        Return cached path for tool, or None if not installed.
-        Falls back to shutil.which if not yet cached.
-        """
         if name not in self._paths:
             self._paths[name] = self._resolve(name)
+
         return self._paths[name]
 
     def available(self, name: str) -> bool:
         return self.get(name) is not None
 
     def print_install_guide(self, missing: list[ToolDef]) -> None:
-        """Print clear install instructions for missing tools."""
-        print()
-        print("  \033[31m[!]\033[0m  Missing required tools — scan may return no findings")
-        print()
+        if not missing:
+            return
+
+        print("\nMissing required tools:")
+
         for tool in missing:
-            print(f"  \033[33m{tool.name}\033[0m")
-            print(f"      Install:  {tool.install}")
-        print()
-        print("  After installing, re-run:  ./run.sh")
+            print(f"  {tool.name}: {tool.install}")
+
         print()
 
     def print_status_table(self) -> None:
-        """Print a ✔/○ table of all tools."""
-        print()
-        required_ok = True
+        print("\nTool status:")
+
         for tool in TOOLS:
             path = self.get(tool.name)
-            found = path is not None
-            if not found and tool.required:
-                required_ok = False
-            tag   = "\033[32m✔\033[0m" if found else ("\033[31m✗\033[0m" if tool.required else "\033[33m○\033[0m")
-            label = "required" if tool.required else "optional"
-            where = path if path else "not installed"
-            print(f"  {tag}  {tool.name:<16} [{label}]  {where}")
+
+            if path:
+                status = "OK"
+                location = path
+            else:
+                status = "MISSING"
+                location = "-"
+
+            print(
+                f"  {tool.name:<12} "
+                f"{status:<8} "
+                f"{location}"
+            )
+
         print()
 
     def _resolve(self, name: str) -> Optional[str]:
-        # Check env override first (e.g. NMAP_PATH=/custom/nmap)
-        env_key = f"{name.upper().replace('-','_')}_PATH"
-        override = os.environ.get(env_key)
-        if override and Path(override).is_file():
-            self._paths[name] = override
-            return override
+        env_name = f"{name.upper()}_PATH"
+        override = os.environ.get(env_name)
 
-        path = shutil.which(name)
-        self._paths[name] = path
-        return path
+        if override:
+            path = Path(override).expanduser()
 
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
 
-# ── Per-scan directory structure ──────────────────────────────────────────────
+            get_logger(__name__).warning(
+                "Configured %s=%s is not a valid executable",
+                env_name,
+                override,
+            )
+
+        return shutil.which(name)
+
 
 @dataclass
 class ScanDirs:
-    """
-    Canonical directory layout for a single scan run.
+    root: Path
+    evidence: Path = field(init=False)
+    raw: Path = field(init=False)
+    reports: Path = field(init=False)
+    logs: Path = field(init=False)
 
-    scans/
-      <target>_<timestamp>/
-        logs/       → scan.log
-        raw/        → nmap.xml, nikto.txt, whatweb.json, ...
-        parsed/     → structured JSON intermediates
-        report/     → final HTML / Excel output
-        evidence/   → raw tool outputs for audit
-    """
-    root:   Path
-    logs:   Path
-    raw:    Path
-    parsed: Path
-    report: Path
-    evidence: Path
+    def __post_init__(self) -> None:
+        self.evidence = self.root / "evidence"
+        self.raw = self.root / "raw"
+        self.reports = self.root / "reports"
+        self.logs = self.root / "logs"
+
+        for directory in (
+            self.root,
+            self.evidence,
+            self.raw,
+            self.reports,
+            self.logs,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def create(cls, base: str, target: str, timestamp: str = None) -> "ScanDirs":
-        """
-        Create the directory tree and return a ScanDirs instance.
+    def create(
+        cls,
+        base_dir: Path,
+        target: str,
+    ) -> "ScanDirs":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        slug = cls._safe_slug(target)
 
-        Args:
-            base:      Base directory, e.g. "scans"
-            target:    Domain or IP, e.g. "example.com"
-            timestamp: Override timestamp (for tests). Defaults to now.
-        """
-        ts    = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-        slug  = _safe_slug(target)
-        root  = Path(base) / f"{slug}_{ts}"
+        root = base_dir / f"{slug}_{timestamp}"
 
-        dirs = cls(
-            root   = root,
-            logs   = root / "logs",
-            raw    = root / "raw",
-            parsed = root / "parsed",
-            report = root / "report",
-            evidence = root / "evidence",
+        return cls(root=root)
+
+    @staticmethod
+    def _safe_slug(value: str) -> str:
+        safe = "".join(
+            character
+            if character.isalnum() or character in "-_."
+            else "_"
+            for character in value
         )
-        for d in [dirs.logs, dirs.raw, dirs.parsed, dirs.report, dirs.evidence]:
-            d.mkdir(parents=True, exist_ok=True)
 
-        log.debug("[env] scan dir: %s", root)
-        return dirs
+        safe = safe.strip("._")
 
-    @property
-    def log_file(self) -> str:
-        return str(self.logs / "scan.log")
-
-    @property
-    def log_dir(self) -> str:
-        return str(self.logs)
-
-    @property
-    def raw_dir(self) -> str:
-        return str(self.raw)
-
-    @property
-    def report_dir(self) -> str:
-        return str(self.report)
-
-    @property
-    def evidence_dir(self) -> str:
-        return str(self.evidence)
-
-    def raw_file(self, name: str) -> str:
-        return str(self.raw / name)
-
-    def report_file(self, name: str) -> str:
-        return str(self.report / name)
-
-    def __str__(self) -> str:
-        return str(self.root)
-
-
-def _safe_slug(text: str) -> str:
-    return (
-        text.lower()
-            .replace("https://","").replace("http://","")
-            .replace("/","_").replace(":","_").replace(".","_")
-    )
+        return safe or "target"

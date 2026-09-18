@@ -48,3 +48,4 @@ urllib3>=2.0.0
 
 # ── Optional: EyeWitness screenshots ──────────────────────────────────────
 # git clone https://github.com/FortyNorthSecurity/EyeWitness
+PyYAML>=6.0

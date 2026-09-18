@@ -1,0 +1,33 @@
+profiles:
+  balanced:
+    max_workers: 4
+    plugins:
+      whois: true
+      dig: true
+      whatweb: true
+      wafw00f: true
+      nmap: true
+      nikto: true
+      curl: true
+      gobuster: true
+      sslscan: true
+      nuclei: true
+      subfinder: true
+      assetfinder: true
+      httpx: true
+  aggressive:
+    max_workers: 6
+    plugins:
+      whois: true
+      dig: true
+      whatweb: true
+      wafw00f: true
+      nmap: true
+      nikto: true
+      curl: true
+      gobuster: true
+      sslscan: true
+      nuclei: true
+      subfinder: true
+      assetfinder: true
+      httpx: true
